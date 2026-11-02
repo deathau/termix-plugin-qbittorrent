@@ -1,26 +1,83 @@
 {
   "plugin": {
-    "name": "Hello World",
-    "description": "A minimal Termix plugin: one tab, one route, one setting and one table."
+    "name": "qBittorrent",
+    "description": "View and manage torrents on a self-hosted qBittorrent instance."
   },
   "tab": {
-    "title": "Hello World",
-    "empty": "No notes yet.",
-    "placeholder": "Write a note",
-    "add": "Add",
-    "error": "Could not load or save notes."
+    "title": "qBittorrent",
+    "loading": "Loading torrents...",
+    "empty": "No torrents.",
+    "noMatch": "No torrents match.",
+    "search": "Search by name",
+    "retry": "Retry",
+    "failed": "Could not reach the Termix server.",
+    "altSpeed": "Alternative speed limits on",
+    "connection": "Connection: {{status}}",
+    "filters": {
+      "all": "All",
+      "downloading": "Downloading",
+      "seeding": "Seeding",
+      "paused": "Paused",
+      "errored": "Errored"
+    },
+    "columns": {
+      "name": "Name",
+      "status": "Status",
+      "progress": "Progress",
+      "size": "Size",
+      "down": "Down",
+      "up": "Up",
+      "eta": "ETA",
+      "ratio": "Ratio"
+    }
+  },
+  "states": {
+    "error": "Error",
+    "missingFiles": "Missing files",
+    "uploading": "Seeding",
+    "stalledUP": "Seeding (idle)",
+    "queuedUP": "Queued to seed",
+    "checkingUP": "Checking",
+    "forcedUP": "Seeding (forced)",
+    "pausedUP": "Paused",
+    "stoppedUP": "Stopped",
+    "allocating": "Allocating",
+    "downloading": "Downloading",
+    "metaDL": "Fetching metadata",
+    "forcedMetaDL": "Fetching metadata (forced)",
+    "stalledDL": "Stalled",
+    "queuedDL": "Queued",
+    "checkingDL": "Checking",
+    "forcedDL": "Downloading (forced)",
+    "pausedDL": "Paused",
+    "stoppedDL": "Stopped",
+    "checkingResumeData": "Checking resume data",
+    "moving": "Moving",
+    "unknown": "Unknown"
   },
   "permissions": {
-    "use": {
-      "title": "Use Hello World",
-      "description": "Open the Hello World tab and keep notes in it."
+    "view": {
+      "title": "View torrents",
+      "description": "Open the qBittorrent tab and see the torrent list and transfer stats."
+    },
+    "manage": {
+      "title": "Manage torrents",
+      "description": "Test the connection, add, start, stop and recheck torrents, and change categories and tags."
+    },
+    "delete": {
+      "title": "Delete torrents",
+      "description": "Remove torrents, optionally together with their downloaded files."
     }
   },
   "settings": {
     "admin": {
-      "greeting": {
-        "label": "Greeting",
-        "description": "Shown at the top of the Hello World tab."
+      "baseUrl": {
+        "label": "qBittorrent URL",
+        "description": "Address of the qBittorrent WebUI as reachable from the Termix server, for example http://qbittorrent:8080."
+      },
+      "apiKey": {
+        "label": "API key",
+        "description": "Create one in the qBittorrent WebUI settings. Needs qBittorrent 5.2 or newer."
       }
     }
   }

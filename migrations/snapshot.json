@@ -25,7 +25,7 @@
       },
       "indexes": [
         {
-          "name": "idx_p_hello_world_notes_user_id",
+          "name": "idx_qbittorrent_notes_user_id",
           "columns": ["userId"]
         }
       ]

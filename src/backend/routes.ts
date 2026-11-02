@@ -1,76 +1,56 @@
 import type { Request, Response, Router } from "express";
-import { desc, eq } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
-
-// The table object ctx.db.define hands back. Drizzle's own types are
-// per dialect, so the routes treat it loosely.
-type NotesTable = any;
+import { connectionDeps } from "./connection.js";
+import { listTorrents, testConnection } from "./handlers.js";
+import type { TorrentService } from "./service.js";
 
 export function registerRoutes(
   router: Router,
   ctx: PluginContext,
-  notesTable: NotesTable,
+  service: TorrentService,
 ): void {
-  router.use(ctx.rbac.require("use") as never);
-
-  const client = () => ctx.db.client<BetterSQLite3Database>();
-  const actor = () => ctx.currentActor() as string;
+  router.use(ctx.rbac.require("view") as never);
 
   /**
    * @openapi
-   * /plugin-api/hello-world/notes:
+   * /plugin-api/qbittorrent/torrents:
    *   get:
-   *     summary: List the signed-in user's notes and the admin greeting
+   *     summary: List torrents with the global transfer state
+   *     description: >
+   *       Always answers 200. When qBittorrent can't be reached the body has
+   *       ok false with an error kind and message. Refreshes from qBittorrent
+   *       at most about once every 1.5 seconds, however many viewers there are.
    *     tags:
-   *       - Hello World
+   *       - qBittorrent
    *     responses:
    *       200:
-   *         description: The greeting and the notes, newest first
+   *         description: ok true with torrents, serverState, categories, tags and sync, or ok false with an error
    */
-  router.get("/notes", async (_req: Request, res: Response) => {
-    const db = await client();
-    const rows = await db
-      .select()
-      .from(notesTable)
-      .where(eq(notesTable.userId, actor()))
-      .orderBy(desc(notesTable.id));
-    const greeting = (await ctx.settings.get<string>("greeting")) ?? "Hello";
-    res.json({ greeting, notes: rows });
+  router.get("/torrents", async (_req: Request, res: Response) => {
+    const result = await listTorrents(connectionDeps(ctx), service);
+    res.status(result.status).json(result.body);
   });
 
   /**
    * @openapi
-   * /plugin-api/hello-world/notes:
+   * /plugin-api/qbittorrent/test-connection:
    *   post:
-   *     summary: Add a note for the signed-in user
+   *     summary: Check the configured qBittorrent URL and API key
+   *     description: >
+   *       Always answers 200. Whether qBittorrent was reachable, and why not,
+   *       is in the body.
    *     tags:
-   *       - Hello World
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             properties:
-   *               text:
-   *                 type: string
+   *       - qBittorrent
    *     responses:
-   *       201:
-   *         description: Note added
-   *       400:
-   *         description: Missing or empty text
+   *       200:
+   *         description: ok true with the qBittorrent and WebAPI versions, or ok false with an error kind and message
    */
-  router.post("/notes", async (req: Request, res: Response) => {
-    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-    if (!text || text.length > 1000) {
-      return res.status(400).json({ error: "text is required" });
-    }
-    const db = await client();
-    // No returning(): MySQL does not support it.
-    await db.insert(notesTable).values({ userId: actor(), text });
-    // SQLite only reaches disk when asked.
-    await ctx.db.persist();
-    res.status(201).json({ success: true });
-  });
+  router.post(
+    "/test-connection",
+    ctx.rbac.require("manage") as never,
+    async (_req: Request, res: Response) => {
+      const result = await testConnection(connectionDeps(ctx));
+      res.status(result.status).json(result.body);
+    },
+  );
 }

@@ -1,52 +1,69 @@
 {
-  "id": "hello-world",
-  "name": "Hello World",
-  "version": "1.0.0",
-  "description": "A minimal Termix plugin: one tab, one route, one setting and one table.",
+  "id": "qbittorrent",
+  "name": "qBittorrent",
+  "version": "0.1.0",
+  "description": "View and manage torrents on a self-hosted qBittorrent instance.",
   "author": {
-    "name": "Your Name"
+    "name": "death.au"
   },
   "license": "Apache-2.0",
-  "repository": "https://github.com/your-org/termix-plugin-hello-world",
-  "docs": "https://github.com/your-org/termix-plugin-hello-world/tree/main/docs",
+  "repository": "https://github.com/deathau/termix-plugin-qbittorrent",
+  "docs": "https://github.com/deathau/termix-plugin-qbittorrent/tree/main/docs",
   "category": "Productivity",
-  "icon": "Hand",
+  "icon": "Download",
   "features": [
-    "A tab opened from the sidebar",
-    "An admin setting",
-    "A table of greetings"
+    "Connect to a qBittorrent 5.2+ WebUI with an API key",
+    "A tab for viewing and managing torrents"
   ],
   "env": [],
   "engine": {
     "termix": ">=26.10.0",
     "api": "^1.2"
   },
-  "capabilities": ["db:own", "network:serve", "ui:surface"],
+  "capabilities": ["network:outbound", "network:serve", "ui:surface"],
   "contributes": {
     "tabs": [
       {
-        "id": "hello-world",
+        "id": "qbittorrent",
         "titleKey": "tab.title",
-        "icon": "Hand",
-        "openFrom": ["rail"]
+        "icon": "Download",
+        "openFrom": ["rail", "palette"]
       }
     ],
     "permissions": [
       {
-        "name": "use",
-        "titleKey": "permissions.use.title",
-        "descriptionKey": "permissions.use.description",
+        "name": "view",
+        "titleKey": "permissions.view.title",
+        "descriptionKey": "permissions.view.description",
         "defaultRoles": ["admin", "user"]
+      },
+      {
+        "name": "manage",
+        "titleKey": "permissions.manage.title",
+        "descriptionKey": "permissions.manage.description",
+        "defaultRoles": ["admin"]
+      },
+      {
+        "name": "delete",
+        "titleKey": "permissions.delete.title",
+        "descriptionKey": "permissions.delete.description",
+        "defaultRoles": ["admin"]
       }
     ],
     "settings": {
       "admin": [
         {
-          "key": "greeting",
+          "key": "baseUrl",
           "type": "string",
-          "labelKey": "settings.admin.greeting.label",
-          "descriptionKey": "settings.admin.greeting.description",
-          "default": "Hello"
+          "labelKey": "settings.admin.baseUrl.label",
+          "descriptionKey": "settings.admin.baseUrl.description",
+          "default": ""
+        },
+        {
+          "key": "apiKey",
+          "type": "secret",
+          "labelKey": "settings.admin.apiKey.label",
+          "descriptionKey": "settings.admin.apiKey.description"
         }
       ]
     }

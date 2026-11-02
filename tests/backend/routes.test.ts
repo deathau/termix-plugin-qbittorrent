@@ -34,7 +34,7 @@ beforeEach(async () => {
     capabilities: manifest.capabilities,
     db: db.database,
     router: () => (router = express.Router()),
-    permissions: ["hello-world.use"],
+    permissions: ["qbittorrent.use"],
   });
   await activate(mock.ctx);
 
