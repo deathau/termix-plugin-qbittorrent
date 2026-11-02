@@ -60,6 +60,9 @@ describe("SyncStore", () => {
       category: "linux",
       tags: ["iso", "new"],
       addedOn: 1700000000,
+      priority: null,
+      savePath: "",
+      contentPath: "",
     });
     // Missing fields default; an infinite ETA becomes null.
     expect(snap.torrents[1].eta).toBe(null);
@@ -134,5 +137,30 @@ describe("SyncStore", () => {
     expect(store.rid).toBe(0);
     expect(store.snapshot().torrents).toEqual([]);
     expect(store.snapshot().sync).toEqual({ rid: 0, fullUpdate: false });
+  });
+
+  it("reads the queue position and paths, treating -1 as outside the queue", () => {
+    const store = new SyncStore();
+    store.apply({
+      rid: 1,
+      full_update: true,
+      torrents: {
+        aaa: {
+          priority: 3,
+          save_path: "/dl/",
+          content_path: "/dl/a",
+        },
+        bbb: { priority: -1 },
+      },
+      server_state: { queueing: true },
+    });
+    const snap = store.snapshot();
+    expect(snap.torrents[0]).toMatchObject({
+      priority: 3,
+      savePath: "/dl/",
+      contentPath: "/dl/a",
+    });
+    expect(snap.torrents[1].priority).toBe(null);
+    expect(snap.serverState.queueing).toBe(true);
   });
 });

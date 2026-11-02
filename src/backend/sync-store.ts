@@ -33,6 +33,10 @@ export interface TorrentRow {
   category: string;
   tags: string[];
   addedOn: number;
+  /** Queue position, or null when queueing is off or the torrent is seeding. */
+  priority: number | null;
+  savePath: string;
+  contentPath: string;
 }
 
 export interface ServerStateRow {
@@ -43,6 +47,8 @@ export interface ServerStateRow {
   uploadLimit: number;
   altSpeedEnabled: boolean;
   connectionStatus: string;
+  /** False when qBittorrent's queueing is off, so queue moves would fail. */
+  queueing: boolean;
 }
 
 export interface Snapshot {
@@ -110,6 +116,7 @@ export class SyncStore {
         uploadLimit: s.up_rate_limit ?? 0,
         altSpeedEnabled: s.use_alt_speed_limits === true,
         connectionStatus: s.connection_status ?? "unknown",
+        queueing: s.queueing === true,
       },
       categories: [...this.#categories].sort(),
       tags: [...this.#tags].sort(),
@@ -144,5 +151,8 @@ function toRow(hash: string, t: QbtTorrentPatch): TorrentRow {
       .map((tag) => tag.trim())
       .filter(Boolean),
     addedOn: t.added_on ?? 0,
+    priority: t.priority !== undefined && t.priority > 0 ? t.priority : null,
+    savePath: t.save_path ?? "",
+    contentPath: t.content_path ?? "",
   };
 }

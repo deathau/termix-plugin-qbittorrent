@@ -1,7 +1,7 @@
 {
   "id": "qbittorrent",
   "name": "qBittorrent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "View and manage torrents on a self-hosted qBittorrent instance.",
   "author": {
     "name": "death.au"
@@ -13,7 +13,10 @@
   "icon": "Download",
   "features": [
     "Connect to a qBittorrent 5.2+ WebUI with an API key",
-    "A tab for viewing and managing torrents"
+    "Add torrents from magnet links and URLs",
+    "Start, stop, recheck, reannounce and delete torrents, and change their queue position",
+    "See a torrent's details, files and trackers",
+    "Open a torrent's location in a Termix file browser tab"
   ],
   "env": [],
   "engine": {
@@ -64,9 +67,31 @@
           "type": "secret",
           "labelKey": "settings.admin.apiKey.label",
           "descriptionKey": "settings.admin.apiKey.description"
+        },
+        {
+          "key": "fileHostId",
+          "type": "custom",
+          "component": "qbittorrent-host-picker",
+          "labelKey": "settings.admin.fileHostId.label",
+          "descriptionKey": "settings.admin.fileHostId.description"
+        },
+        {
+          "key": "qbtPathPrefix",
+          "type": "string",
+          "labelKey": "settings.admin.qbtPathPrefix.label",
+          "descriptionKey": "settings.admin.qbtPathPrefix.description",
+          "default": ""
+        },
+        {
+          "key": "hostPathPrefix",
+          "type": "string",
+          "labelKey": "settings.admin.hostPathPrefix.label",
+          "descriptionKey": "settings.admin.hostPathPrefix.description",
+          "default": ""
         }
       ]
-    }
+    },
+    "uses": ["files.openHost"]
   },
   "locales": "locales",
   "platforms": ["linux", "win32", "darwin"]

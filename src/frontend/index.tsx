@@ -1,38 +1,68 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  usePermission,
+  useToast,
   useTranslation,
   type TabProps,
   type TermixApp,
 } from "@termix-ssh/plugin-sdk/frontend";
 import {
+  AddButton,
+  Button,
+  PanelSearch,
+  PanelShell,
+  PanePrompt,
+  PROMPT_BUTTON,
+  PROMPT_DESTRUCTIVE_BUTTON,
+  Segmented,
+  SwitchRow,
+  useInstalledPlugins,
+} from "@termix-ssh/plugin-sdk/ui";
+import { AddTorrentView } from "./AddTorrentView.js";
+import { HOST_PICKER_ID, HostPicker } from "./HostPicker.js";
+import { TorrentDetails } from "./TorrentDetails.js";
+import { TorrentTable } from "./TorrentTable.js";
+import { useTorrents } from "./useTorrents.js";
+import {
   FILTERS,
   countByFilter,
-  formatBytes,
-  formatEta,
-  formatPercent,
-  formatRatio,
   formatSpeed,
+  locationPath,
   matchesFilter,
   sortRows,
+  type DetailsBody,
+  type DoneBody,
   type Filter,
+  type LocationConfig,
   type SortDir,
   type SortKey,
-  type TorrentsBody,
-  type TorrentsOk,
+  type TorrentAction,
+  type TorrentRow,
 } from "./torrents.js";
 
 const TAB_ID = "qbittorrent";
-const POLL_MS = 3000;
+// Another plugin's id and action, not an SDK API. Calling it while that plugin
+// is off does nothing and reports nothing, so its presence is checked first.
+const FILE_MANAGER_ID = "file-manager";
+const OPEN_FILES_ACTION = "files.openHost";
 
-const COLUMNS: { key: SortKey; labelKey: string; align?: "right" }[] = [
-  { key: "name", labelKey: "tab.columns.name" },
-  { key: "state", labelKey: "tab.columns.status" },
-  { key: "progress", labelKey: "tab.columns.progress" },
-  { key: "size", labelKey: "tab.columns.size", align: "right" },
-  { key: "downloadSpeed", labelKey: "tab.columns.down", align: "right" },
-  { key: "uploadSpeed", labelKey: "tab.columns.up", align: "right" },
-  { key: "eta", labelKey: "tab.columns.eta", align: "right" },
-  { key: "ratio", labelKey: "tab.columns.ratio", align: "right" },
+const SIMPLE_ACTIONS: {
+  action: TorrentAction;
+  labelKey: string;
+  value?: boolean;
+}[] = [
+  { action: "start", labelKey: "tab.actions.start" },
+  { action: "stop", labelKey: "tab.actions.stop" },
+  { action: "setForceStart", labelKey: "tab.actions.forceStart", value: true },
+  { action: "recheck", labelKey: "tab.actions.recheck" },
+  { action: "reannounce", labelKey: "tab.actions.reannounce" },
+];
+
+const QUEUE_ACTIONS: { action: TorrentAction; labelKey: string }[] = [
+  { action: "topPrio", labelKey: "tab.actions.queueTop" },
+  { action: "increasePrio", labelKey: "tab.actions.queueUp" },
+  { action: "decreasePrio", labelKey: "tab.actions.queueDown" },
+  { action: "bottomPrio", labelKey: "tab.actions.queueBottom" },
 ];
 
 // Lucide "download".
@@ -57,200 +87,341 @@ function DownloadIcon(props: { className?: string }) {
 function createTab(app: TermixApp) {
   return function QbittorrentTab({ isVisible }: TabProps) {
     const { t } = useTranslation();
-    const [data, setData] = useState<TorrentsOk | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const toast = useToast();
+    const canManage = usePermission("manage");
+    const canDelete = usePermission("delete");
+    const plugins = useInstalledPlugins();
+    const { data, error, refresh, pollMs } = useTorrents(app, isVisible);
+
     const [filter, setFilter] = useState<Filter>("all");
     const [query, setQuery] = useState("");
     const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({
       key: "addedOn",
       dir: "desc",
     });
-    // Bumping this restarts the polling loop straight away (the Retry button).
-    const [nonce, setNonce] = useState(0);
+    const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+    const [detailHash, setDetailHash] = useState<string | null>(null);
+    const [adding, setAdding] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteFiles, setDeleteFiles] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [location, setLocation] = useState<LocationConfig | null>(null);
 
-    // Poll only while the tab is showing. The next request is scheduled after
-    // the previous one finishes, so a slow qBittorrent never piles up requests.
+    const torrents = data?.torrents ?? [];
+
     useEffect(() => {
       if (!isVisible) return;
-      let cancelled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      void app.api
+        .get<{ ok: true } & LocationConfig>("/location-config")
+        .then(({ data: body }) => setLocation(body))
+        .catch(() => setLocation(null));
+    }, [isVisible]);
 
-      const tick = async () => {
-        try {
-          const { data: body } = await app.api.get<TorrentsBody>("/torrents");
-          if (cancelled) return;
-          if (body.ok) {
-            setData(body);
-            setError(null);
-          } else {
-            // Keep showing the last good data, with the reason above it.
-            setError(body.error.message);
-          }
-        } catch {
-          if (!cancelled) setError(t("tab.failed"));
-        }
-        if (!cancelled) timer = setTimeout(() => void tick(), POLL_MS);
-      };
-
-      void tick();
-      return () => {
-        cancelled = true;
-        if (timer) clearTimeout(timer);
-      };
-    }, [isVisible, nonce]);
+    // A torrent removed elsewhere must not stay selected, or a later action
+    // would quietly apply to nothing, and its details have nothing to show.
+    useEffect(() => {
+      if (!data) return;
+      const known = new Set(torrents.map((row) => row.hash));
+      setSelected((current) =>
+        [...current].every((hash) => known.has(hash))
+          ? current
+          : new Set([...current].filter((hash) => known.has(hash))),
+      );
+      setDetailHash((current) =>
+        current && known.has(current) ? current : null,
+      );
+    }, [data]);
 
     const rows = useMemo(
       () =>
         sortRows(
-          (data?.torrents ?? []).filter((row) =>
-            matchesFilter(row, filter, query),
-          ),
+          torrents.filter((row) => matchesFilter(row, filter, query)),
           sort.key,
           sort.dir,
         ),
       [data, filter, query, sort],
     );
-    const counts = useMemo(() => countByFilter(data?.torrents ?? []), [data]);
+    const counts = useMemo(() => countByFilter(torrents), [data]);
+    const hashes = [...selected];
+    const detailRow = torrents.find((row) => row.hash === detailHash) ?? null;
+
+    const fileManagerOn = plugins.some(
+      (plugin) => plugin.id === FILE_MANAGER_ID && plugin.enabled,
+    );
+    const locationBlocked = !location?.hostId
+      ? t("tab.location.noHost")
+      : !fileManagerOn
+        ? t("tab.location.noFileManager")
+        : null;
 
     const toggleSort = (key: SortKey) =>
       setSort((current) =>
         current.key === key
           ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
-          : { key, dir: key === "name" || key === "state" ? "asc" : "desc" },
+          : {
+              key,
+              dir:
+                key === "name" || key === "state" || key === "priority"
+                  ? "asc"
+                  : "desc",
+            },
       );
 
+    const select = (changed: string[], checked: boolean) =>
+      setSelected((current) => {
+        const next = new Set(current);
+        for (const hash of changed) {
+          if (checked) next.add(hash);
+          else next.delete(hash);
+        }
+        return next;
+      });
+
+    const send = async (path: string, body: unknown): Promise<boolean> => {
+      setBusy(true);
+      try {
+        const { data: result } = await app.api.post<DoneBody>(path, body);
+        if (result.ok === false) {
+          toast.error(result.error.message);
+          return false;
+        }
+        refresh();
+        return true;
+      } catch (err) {
+        const result = (err as { response?: { data?: DoneBody } }).response
+          ?.data;
+        toast.error(
+          result?.ok === false ? result.error.message : t("tab.failedAction"),
+        );
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const runAction = (action: TorrentAction, value?: boolean) =>
+      void send("/torrents/actions", { action, hashes, value });
+
+    const confirmDelete = async () => {
+      if (await send("/torrents/delete", { hashes, deleteFiles })) {
+        setSelected(new Set());
+        setDeleting(false);
+        setDeleteFiles(false);
+      }
+    };
+
+    const openLocation = async (row: TorrentRow) => {
+      if (!location?.hostId) return;
+      const host = app.getHost(location.hostId);
+      if (!host) {
+        toast.error(t("tab.location.noAccess"));
+        return;
+      }
+      try {
+        const { data: body } = await app.api.get<DetailsBody>(
+          `/torrents/${row.hash}/details`,
+        );
+        if (body.ok === false) {
+          toast.error(body.error.message);
+          return;
+        }
+        await app.invokeAction(
+          OPEN_FILES_ACTION,
+          host,
+          locationPath(row, body.files, location),
+        );
+      } catch {
+        toast.error(t("tab.location.failed"));
+      }
+    };
+
     const state = data?.serverState;
+    const single =
+      hashes.length === 1
+        ? torrents.find((row) => row.hash === hashes[0])
+        : undefined;
 
     return (
-      <div className="flex flex-col gap-3 p-4">
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-          <h2 className="text-lg font-semibold">{t("tab.title")}</h2>
-          {state && (
-            <p className="text-sm text-muted-foreground">
-              {"\u2193"} {formatSpeed(state.downloadSpeed)} {"\u00a0\u00a0"}
-              {"\u2191"} {formatSpeed(state.uploadSpeed)}
-              {state.altSpeedEnabled && ` \u00b7 ${t("tab.altSpeed")}`}
+      <PanelShell
+        icon={<DownloadIcon className="size-4" />}
+        title={t("tab.title")}
+        status={
+          state && (
+            <>
+              {"↓"} {formatSpeed(state.downloadSpeed)} {"  "}
+              {"↑"} {formatSpeed(state.uploadSpeed)}
+              {state.altSpeedEnabled && ` · ${t("tab.altSpeed")}`}
               {state.connectionStatus !== "connected" &&
-                ` \u00b7 ${t("tab.connection", { status: state.connectionStatus })}`}
+                ` · ${t("tab.connection", { status: state.connectionStatus })}`}
+            </>
+          )
+        }
+        actions={
+          canManage && (
+            <AddButton label={t("tab.add")} onClick={() => setAdding(true)} />
+          )
+        }
+        toolbar={
+          data && (
+            <div className="flex flex-1 flex-wrap items-center gap-2">
+              <Segmented<Filter>
+                value={filter}
+                onChange={setFilter}
+                options={FILTERS.map((f) => ({
+                  value: f,
+                  label: t(`tab.filters.${f}`),
+                  count: counts[f],
+                }))}
+              />
+              <PanelSearch
+                value={query}
+                onChange={setQuery}
+                placeholder={t("tab.search")}
+                className="min-w-40 flex-1"
+              />
+            </div>
+          )
+        }
+      >
+        <div className="flex flex-col gap-3 p-4">
+          {error && (
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button size="sm" variant="outline" onClick={refresh}>
+                {t("tab.retry")}
+              </Button>
+            </div>
+          )}
+
+          {hashes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="mr-2 text-sm text-muted-foreground">
+                {t("tab.selected", { count: hashes.length })}
+              </span>
+              {canManage &&
+                SIMPLE_ACTIONS.map(({ action, labelKey, value }) => (
+                  <Button
+                    key={action}
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => runAction(action, value)}
+                  >
+                    {t(labelKey)}
+                  </Button>
+                ))}
+              {canManage &&
+                QUEUE_ACTIONS.map(({ action, labelKey }) => (
+                  <Button
+                    key={action}
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || !state?.queueing}
+                    title={state?.queueing ? undefined : t("tab.queueOff")}
+                    onClick={() => runAction(action)}
+                  >
+                    {t(labelKey)}
+                  </Button>
+                ))}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!single || locationBlocked !== null}
+                title={
+                  locationBlocked ??
+                  (single ? undefined : t("tab.location.selectOne"))
+                }
+                onClick={() => single && void openLocation(single)}
+              >
+                {t("tab.actions.openLocation")}
+              </Button>
+              {canDelete && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => setDeleting(true)}
+                >
+                  {t("tab.actions.delete")}
+                </Button>
+              )}
+            </div>
+          )}
+
+          {!data && !error && (
+            <p className="text-sm text-muted-foreground">{t("tab.loading")}</p>
+          )}
+
+          {data && rows.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              {torrents.length === 0 ? t("tab.empty") : t("tab.noMatch")}
             </p>
+          )}
+
+          {rows.length > 0 && (
+            <TorrentTable
+              rows={rows}
+              sort={sort}
+              onSort={toggleSort}
+              selected={selected}
+              onSelect={select}
+              onOpen={(row) => setDetailHash(row.hash)}
+            />
           )}
         </div>
 
-        {error && (
-          <div className="flex items-center gap-3">
-            <p className="text-sm text-destructive">{error}</p>
-            <button
-              type="button"
-              className="border border-border px-3 py-1 text-sm"
-              onClick={() => setNonce((n) => n + 1)}
-            >
-              {t("tab.retry")}
-            </button>
-          </div>
-        )}
+        <TorrentDetails
+          app={app}
+          row={detailRow}
+          pollMs={pollMs}
+          isVisible={isVisible}
+          canOpenLocation={locationBlocked === null}
+          onOpenLocation={(row) => void openLocation(row)}
+          onClose={() => setDetailHash(null)}
+        />
 
-        {data && (
-          <div className="flex flex-wrap items-center gap-2">
-            {FILTERS.map((f) => (
+        <AddTorrentView
+          app={app}
+          open={adding}
+          onOpenChange={setAdding}
+          categories={data?.categories ?? []}
+          onAdded={refresh}
+        />
+
+        <PanePrompt
+          open={deleting}
+          tone="destructive"
+          title={t("tab.deletePrompt.title", { count: hashes.length })}
+          description={t("tab.deletePrompt.description")}
+          onCancel={() => setDeleting(false)}
+          actions={
+            <>
               <button
-                key={f}
                 type="button"
-                className={`border border-border px-3 py-1 text-sm ${
-                  filter === f ? "bg-muted font-semibold" : ""
-                }`}
-                onClick={() => setFilter(f)}
+                className={PROMPT_BUTTON}
+                onClick={() => setDeleting(false)}
               >
-                {t(`tab.filters.${f}`)} ({counts[f]})
+                {t("tab.deletePrompt.cancel")}
               </button>
-            ))}
-            <input
-              className="min-w-40 flex-1 border border-border bg-transparent px-2 py-1 text-sm"
-              value={query}
-              placeholder={t("tab.search")}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-        )}
-
-        {!data && !error && (
-          <p className="text-sm text-muted-foreground">{t("tab.loading")}</p>
-        )}
-
-        {data && rows.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            {data.torrents.length === 0 ? t("tab.empty") : t("tab.noMatch")}
-          </p>
-        )}
-
-        {rows.length > 0 && (
-          <div className="overflow-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left">
-                  {COLUMNS.map((column) => (
-                    <th
-                      key={column.key}
-                      className={`cursor-pointer select-none whitespace-nowrap px-2 py-1 font-medium ${
-                        column.align === "right" ? "text-right" : ""
-                      }`}
-                      onClick={() => toggleSort(column.key)}
-                    >
-                      {t(column.labelKey)}
-                      {sort.key === column.key &&
-                        (sort.dir === "asc" ? " \u25b2" : " \u25bc")}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.hash} className="border-b border-border">
-                    <td
-                      className="max-w-md truncate px-2 py-1"
-                      title={row.name}
-                    >
-                      {row.name}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1">
-                      {t(`states.${row.state}`, { defaultValue: row.state })}
-                    </td>
-                    <td className="px-2 py-1">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-24 bg-muted">
-                          <div
-                            className="h-full bg-primary"
-                            style={{
-                              width: `${Math.min(100, row.progress * 100)}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="whitespace-nowrap">
-                          {formatPercent(row.progress)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right">
-                      {formatBytes(row.size)}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right">
-                      {formatSpeed(row.downloadSpeed)}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right">
-                      {formatSpeed(row.uploadSpeed)}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right">
-                      {formatEta(row.eta)}
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right">
-                      {formatRatio(row.ratio)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              <button
+                type="button"
+                className={PROMPT_DESTRUCTIVE_BUTTON}
+                disabled={busy}
+                onClick={() => void confirmDelete()}
+              >
+                {t("tab.deletePrompt.confirm")}
+              </button>
+            </>
+          }
+        >
+          <SwitchRow
+            label={t("tab.deletePrompt.deleteFiles")}
+            description={t("tab.deletePrompt.deleteFilesHint")}
+            checked={deleteFiles}
+            onChange={setDeleteFiles}
+          />
+        </PanePrompt>
+      </PanelShell>
     );
   };
 }
@@ -269,4 +440,5 @@ export function activate(app: TermixApp): void {
     singleton: true,
     hostless: true,
   });
+  app.registerSettingsComponent(HOST_PICKER_ID, HostPicker);
 }

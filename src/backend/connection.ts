@@ -5,22 +5,17 @@
 import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import type { ConnectionDeps } from "./handlers.js";
 import type { FetchLike } from "./qbittorrent/client.js";
+import { toLocationConfig, type LocationConfig } from "./settings.js";
 
-// ASSUMPTION (not yet confirmed against the SDK types): the Backend docs say
-// ctx.fetch refuses private and loopback addresses "unless you list the exact
-// host in allowPrivateHosts", but don't say where. This passes it per call.
-// If `npm run typecheck` or a real request disagrees, this is the one place
-// to change.
-type OutboundInit = RequestInit & { allowPrivateHosts?: string[] };
-type OutboundFetch = (url: string, init?: OutboundInit) => Promise<Response>;
+type OutboundInit = Parameters<PluginContext["fetch"]>[1];
 
 export function connectionDeps(ctx: PluginContext): ConnectionDeps {
   // The URL is set by an admin and users cannot change it, so allowing exactly
   // that host does not open an SSRF path for other users. Calling through
   // `ctx.fetch(...)` keeps `this` bound.
   const fetch: FetchLike = (input, init) =>
-    (ctx.fetch as unknown as OutboundFetch)(input, {
-      ...init,
+    ctx.fetch(input, {
+      ...(init as OutboundInit),
       allowPrivateHosts: [new URL(input).hostname],
     });
 
@@ -29,4 +24,15 @@ export function connectionDeps(ctx: PluginContext): ConnectionDeps {
     getApiKey: () => ctx.settings.get<string>("apiKey"),
     fetch,
   };
+}
+
+export async function locationConfig(
+  ctx: PluginContext,
+): Promise<LocationConfig> {
+  const [fileHostId, qbtPathPrefix, hostPathPrefix] = await Promise.all([
+    ctx.settings.get("fileHostId"),
+    ctx.settings.get("qbtPathPrefix"),
+    ctx.settings.get("hostPathPrefix"),
+  ]);
+  return toLocationConfig({ fileHostId, qbtPathPrefix, hostPathPrefix });
 }

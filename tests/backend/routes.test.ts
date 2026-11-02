@@ -1,7 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import express, { type Router } from "express";
 import {
   createMockCtx,
@@ -15,13 +15,14 @@ import { activate } from "../../src/backend/index.js";
 
 const pluginDir = fileURLToPath(new URL("../..", import.meta.url));
 const manifest = manifestJson as unknown as PluginManifest;
+const HASH = "a".repeat(40);
 
 let db: TestDb;
 let mock: MockPluginContext;
 let server: http.Server;
 let port: number;
 
-beforeEach(async () => {
+async function start(permissions: string[]) {
   db = await createTestDb(pluginDir);
   db.sqlite
     .prepare("INSERT INTO users (id, username) VALUES (?, ?)")
@@ -34,8 +35,17 @@ beforeEach(async () => {
     capabilities: manifest.capabilities,
     db: db.database,
     router: () => (router = express.Router()),
-    permissions: ["qbittorrent.use"],
+    permissions,
+    fetch: async (url) =>
+      new Response(
+        url.includes("/torrents/add") ? '{"success_count":1}' : "[]",
+        {
+          status: 200,
+        },
+      ),
   });
+  await mock.ctx.settings.set("baseUrl", "http://qbittorrent:8080");
+  await mock.ctx.settings.set("apiKey", "qbt_secret");
   await activate(mock.ctx);
 
   const app = express();
@@ -48,7 +58,7 @@ beforeEach(async () => {
   server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   port = (server.address() as AddressInfo).port;
-});
+}
 
 afterEach(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -64,23 +74,85 @@ async function request(method: string, path: string, body?: unknown) {
   return { status: response.status, body: await response.json() };
 }
 
-describe("notes routes", () => {
-  it("adds a note and lists it with the admin greeting", async () => {
-    await mock.ctx.settings.set("greeting", "Hi there");
+const ROUTES: {
+  method: string;
+  path: string;
+  body?: unknown;
+  needs: string;
+}[] = [
+  { method: "GET", path: "/torrents", needs: "view" },
+  { method: "GET", path: `/torrents/${HASH}/details`, needs: "view" },
+  { method: "GET", path: "/location-config", needs: "view" },
+  {
+    method: "POST",
+    path: "/torrents/add",
+    body: { urls: ["magnet:?xt=urn:btih:abc"] },
+    needs: "manage",
+  },
+  {
+    method: "POST",
+    path: "/torrents/actions",
+    body: { action: "stop", hashes: [HASH] },
+    needs: "manage",
+  },
+  {
+    method: "POST",
+    path: "/torrents/delete",
+    body: { hashes: [HASH], deleteFiles: false },
+    needs: "delete",
+  },
+  { method: "POST", path: "/test-connection", needs: "manage" },
+];
 
-    const created = await request("POST", "/notes", { text: "first" });
-    expect(created.status).toBe(201);
-    expect(created.body).toEqual({ success: true });
+describe("permissions", () => {
+  for (const route of ROUTES) {
+    const name = `${route.method} ${route.path}`;
 
-    const list = await request("GET", "/notes");
-    expect(list.body.greeting).toBe("Hi there");
-    expect(list.body.notes).toEqual([
-      expect.objectContaining({ userId: "user-1", text: "first" }),
-    ]);
+    it(`${name} is allowed with ${route.needs}`, async () => {
+      await start(["qbittorrent.view", `qbittorrent.${route.needs}`]);
+      const res = await request(route.method, route.path, route.body);
+      expect(res.status).toBe(200);
+    });
+
+    it(`${name} is refused without ${route.needs}`, async () => {
+      const others = ["view", "manage", "delete"].filter(
+        (p) => p !== route.needs,
+      );
+      await start(others.map((p) => `qbittorrent.${p}`));
+      const res = await request(route.method, route.path, route.body);
+      expect(res.status).toBe(403);
+    });
+  }
+
+  it("does not let manage delete", async () => {
+    await start(["qbittorrent.view", "qbittorrent.manage"]);
+    const res = await request("POST", "/torrents/delete", {
+      hashes: [HASH],
+      deleteFiles: true,
+    });
+    expect(res.status).toBe(403);
+    expect(mock.fetches.length).toBe(0);
+  });
+});
+
+describe("/location-config", () => {
+  it("returns the mapping", async () => {
+    await start(["qbittorrent.view"]);
+    await mock.ctx.settings.set("fileHostId", "7");
+    await mock.ctx.settings.set("qbtPathPrefix", " /downloads ");
+    await mock.ctx.settings.set("hostPathPrefix", "/mnt/media");
+    const res = await request("GET", "/location-config");
+    expect(res.body).toEqual({
+      ok: true,
+      hostId: "7",
+      qbtPrefix: "/downloads",
+      hostPrefix: "/mnt/media",
+    });
   });
 
-  it("refuses an empty note", async () => {
-    const created = await request("POST", "/notes", { text: "  " });
-    expect(created.status).toBe(400);
+  it("reports no host when unset", async () => {
+    await start(["qbittorrent.view"]);
+    const res = await request("GET", "/location-config");
+    expect(res.body).toMatchObject({ hostId: null, qbtPrefix: "" });
   });
 });

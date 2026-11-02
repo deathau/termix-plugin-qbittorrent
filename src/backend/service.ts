@@ -37,6 +37,11 @@ export class TorrentService {
     this.#lastRefresh = Number.NEGATIVE_INFINITY;
   }
 
+  /** Call after changing torrents, so the next request refreshes instead of reusing the cache. */
+  invalidate(): void {
+    this.#lastRefresh = Number.NEGATIVE_INFINITY;
+  }
+
   /** Returns the current snapshot, refreshing it first if it is stale. Rejects with a QbtError if qBittorrent can't be reached. */
   async snapshot(client: QbtClient): Promise<Snapshot> {
     if (this.#now() - this.#lastRefresh >= this.#minIntervalMs) {

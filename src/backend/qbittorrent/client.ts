@@ -27,7 +27,10 @@ export type QbtErrorKind =
   | "http"
   | "redirect"
   | "unexpected"
-  | "unsupported";
+  | "unsupported"
+  | "bad-request"
+  | "not-found"
+  | "conflict";
 
 export class QbtError extends Error {
   readonly kind: QbtErrorKind;
@@ -49,6 +52,8 @@ export class QbtError extends Error {
 export const MIN_WEBAPI_VERSION = "2.11.0";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+/** qBittorrent may fetch a URL before it answers /torrents/add. */
+const ADD_TIMEOUT_MS = 30_000;
 
 /** Validate a user-entered WebUI address and strip trailing slashes, query and hash. */
 export function normalizeBaseUrl(raw: string): string {
@@ -126,6 +131,11 @@ export interface QbtTorrent {
   tags: string;
   /** Unix seconds. */
   added_on: number;
+  /** Queue position, from 1. Not positive when queueing is off or the torrent is seeding. */
+  priority: number;
+  save_path: string;
+  /** The torrent's root folder, or its file for a single-file torrent. */
+  content_path: string;
 }
 
 /** Updates carry only the fields that changed. */
@@ -138,6 +148,7 @@ export interface QbtServerState {
   up_rate_limit: number;
   connection_status: string;
   use_alt_speed_limits: boolean;
+  queueing: boolean;
 }
 
 /** One reply from `GET /sync/maindata`. */
@@ -152,6 +163,94 @@ export interface MainDataUpdate {
   tags?: string[];
   tags_removed?: string[];
   server_state?: Partial<QbtServerState>;
+}
+
+/** Actions that take only `hashes`, plus setForceStart, which also takes `value`. */
+export const TORRENT_ACTIONS = [
+  "start",
+  "stop",
+  "recheck",
+  "reannounce",
+  "increasePrio",
+  "decreasePrio",
+  "topPrio",
+  "bottomPrio",
+  "setForceStart",
+] as const;
+export type TorrentAction = (typeof TORRENT_ACTIONS)[number];
+
+const QUEUE_ACTIONS: readonly TorrentAction[] = [
+  "increasePrio",
+  "decreasePrio",
+  "topPrio",
+  "bottomPrio",
+];
+
+export interface AddTorrentsOptions {
+  /** Magnet links or http(s) URLs. */
+  urls: string[];
+  savePath?: string;
+  category?: string;
+  tags?: string[];
+  stopped?: boolean;
+}
+
+export interface AddTorrentsResult {
+  added: number;
+  failed: number;
+  /** URLs qBittorrent is still fetching. */
+  pending: number;
+}
+
+/** The fields of /torrents/properties the plugin shows. -1 means unknown. */
+export interface QbtProperties {
+  save_path: string;
+  comment: string;
+  created_by: string;
+  creation_date: number;
+  addition_date: number;
+  completion_date: number;
+  total_size: number;
+  total_downloaded: number;
+  total_uploaded: number;
+  piece_size: number;
+  pieces_have: number;
+  pieces_num: number;
+  share_ratio: number;
+  time_elapsed: number;
+  seeding_time: number;
+  nb_connections: number;
+}
+
+export interface QbtFile {
+  index: number;
+  /** Relative path. Contains "/" when the torrent has a root folder. */
+  name: string;
+  size: number;
+  progress: number;
+  /** 0 skip, 1 normal, 6 high, 7 maximum. */
+  priority: number;
+}
+
+export interface QbtTracker {
+  url: string;
+  /** 0 disabled (DHT, PeX, LSD), 1 not contacted, 2 working, 3 updating, 4 not working. */
+  status: number;
+  /** Negative for the DHT, PeX and LSD placeholder entries. */
+  tier: number;
+  num_peers: number;
+  num_seeds: number;
+  num_leeches: number;
+  msg: string;
+}
+
+interface RequestOptions {
+  method?: "GET" | "POST";
+  /** Sent urlencoded. */
+  form?: Record<string, string>;
+  timeoutMs?: number;
+  /** Replaces the generic message for a 409, whose meaning depends on the endpoint. */
+  conflictMessage?: string;
 }
 
 export class QbtClient {
@@ -198,13 +297,9 @@ export class QbtClient {
    */
   async getMainData(rid: number): Promise<MainDataUpdate> {
     const safeRid = Number.isFinite(rid) ? Math.max(0, Math.trunc(rid)) : 0;
-    const text = await this.#get(`sync/maindata?rid=${safeRid}`);
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw this.#notQbittorrent();
-    }
+    const json = this.#parseJson(
+      await this.#get(`sync/maindata?rid=${safeRid}`),
+    );
     if (
       typeof json !== "object" ||
       json === null ||
@@ -213,6 +308,96 @@ export class QbtClient {
       throw this.#notQbittorrent();
     }
     return json as MainDataUpdate;
+  }
+
+  /** `POST /torrents/<action>`. Unknown hashes are ignored by qBittorrent. */
+  async torrentAction(
+    action: TorrentAction,
+    hashes: string[],
+    value?: boolean,
+  ): Promise<void> {
+    const form: Record<string, string> = { hashes: hashes.join("|") };
+    if (action === "setForceStart") form.value = String(value ?? true);
+    await this.#request(`torrents/${action}`, {
+      method: "POST",
+      form,
+      conflictMessage: QUEUE_ACTIONS.includes(action)
+        ? "Torrent queueing is turned off in qBittorrent, so queue positions can't be changed."
+        : undefined,
+    });
+  }
+
+  /** `POST /torrents/delete`. With `deleteFiles`, the downloaded data goes too. */
+  async deleteTorrents(hashes: string[], deleteFiles: boolean): Promise<void> {
+    await this.#request("torrents/delete", {
+      method: "POST",
+      form: { hashes: hashes.join("|"), deleteFiles: String(deleteFiles) },
+    });
+  }
+
+  /**
+   * `POST /torrents/add` for magnet links and URLs. `.torrent` files are not
+   * supported: Termix's ctx.fetch takes a string body, which can't carry them.
+   *
+   * qBittorrent answers 409 when nothing was added, whether the links were
+   * invalid or the torrents are already in the list. Recent versions answer with JSON counts, older
+   * ones with "Ok." or "Fails.".
+   */
+  async addTorrents(options: AddTorrentsOptions): Promise<AddTorrentsResult> {
+    const form: Record<string, string> = { urls: options.urls.join("\n") };
+    if (options.savePath) form.savepath = options.savePath;
+    if (options.category) form.category = options.category;
+    if (options.tags?.length) form.tags = options.tags.join(",");
+    if (options.stopped) form.stopped = "true";
+
+    const text = await this.#request("torrents/add", {
+      method: "POST",
+      form,
+      timeoutMs: Math.max(this.#timeoutMs, ADD_TIMEOUT_MS),
+      conflictMessage:
+        "qBittorrent didn't add anything. The links may be invalid, or the torrents may already be in the list.",
+    });
+
+    const count = options.urls.length;
+    if (text.trim() === "Ok.") return { added: count, failed: 0, pending: 0 };
+    if (text.trim() === "Fails.")
+      return { added: 0, failed: count, pending: 0 };
+    const json = this.#parseJson(text) as {
+      success_count?: number;
+      failure_count?: number;
+      pending_count?: number;
+    } | null;
+    return {
+      added: json?.success_count ?? 0,
+      failed: json?.failure_count ?? 0,
+      pending: json?.pending_count ?? 0,
+    };
+  }
+
+  async getProperties(hash: string): Promise<QbtProperties> {
+    return this.#parseJson(
+      await this.#get(`torrents/properties?hash=${encodeURIComponent(hash)}`),
+    ) as QbtProperties;
+  }
+
+  async getFiles(hash: string): Promise<QbtFile[]> {
+    return this.#parseJson(
+      await this.#get(`torrents/files?hash=${encodeURIComponent(hash)}`),
+    ) as QbtFile[];
+  }
+
+  async getTrackers(hash: string): Promise<QbtTracker[]> {
+    return this.#parseJson(
+      await this.#get(`torrents/trackers?hash=${encodeURIComponent(hash)}`),
+    ) as QbtTracker[];
+  }
+
+  #parseJson(text: string): unknown {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw this.#notQbittorrent();
+    }
   }
 
   #notQbittorrent(): QbtError {
@@ -235,22 +420,36 @@ export class QbtClient {
     return { appVersion, webApiVersion };
   }
 
-  async #get(path: string): Promise<string> {
+  #get(path: string): Promise<string> {
+    return this.#request(path);
+  }
+
+  async #request(path: string, options: RequestOptions = {}): Promise<string> {
     const url = `${this.baseUrl}/api/v2/${path}`;
+    const timeoutMs = options.timeoutMs ?? this.#timeoutMs;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.#apiKey}`,
+      Accept: "*/*",
+    };
+    if (options.form)
+      headers["Content-Type"] = "application/x-www-form-urlencoded";
     let res: Response;
     try {
       res = await this.#fetch(url, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${this.#apiKey}`, Accept: "*/*" },
+        method: options.method ?? "GET",
+        headers,
+        ...(options.form
+          ? { body: new URLSearchParams(options.form).toString() }
+          : {}),
         // Termix's ctx.fetch never follows redirects, so behave the same everywhere.
         redirect: "manual",
-        signal: AbortSignal.timeout(this.#timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       if (isTimeout(err)) {
         throw new QbtError(
           "timeout",
-          `qBittorrent did not answer within ${formatDuration(this.#timeoutMs)} at ${this.baseUrl}.`,
+          `qBittorrent did not answer within ${formatDuration(timeoutMs)} at ${this.baseUrl}.`,
         );
       }
       throw new QbtError(
@@ -279,6 +478,28 @@ export class QbtClient {
         "forbidden",
         "qBittorrent rejected the request (403). The API key may be wrong, or qBittorrent is older than 5.2 and does not support API keys.",
         403,
+      );
+    }
+    if (res.status === 400 || res.status === 415) {
+      throw new QbtError(
+        "bad-request",
+        `qBittorrent refused the request (${res.status}).`,
+        res.status,
+      );
+    }
+    if (res.status === 404) {
+      throw new QbtError(
+        "not-found",
+        "qBittorrent no longer has that torrent.",
+        404,
+      );
+    }
+    if (res.status === 409) {
+      throw new QbtError(
+        "conflict",
+        options.conflictMessage ??
+          "qBittorrent can't do that in the torrent's current state.",
+        409,
       );
     }
     if (!res.ok) {

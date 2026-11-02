@@ -28,7 +28,104 @@
       "down": "Down",
       "up": "Up",
       "eta": "ETA",
-      "ratio": "Ratio"
+      "ratio": "Ratio",
+      "queue": "#"
+    },
+    "selectAll": "Select all torrents",
+    "selectRow": "Select {{name}}",
+    "selected": "{{count}} selected",
+    "add": "Add",
+    "failedAction": "Could not reach the Termix server.",
+    "actions": {
+      "start": "Start",
+      "stop": "Stop",
+      "forceStart": "Force start",
+      "recheck": "Recheck",
+      "reannounce": "Reannounce",
+      "queueTop": "Move to top",
+      "queueUp": "Move up",
+      "queueDown": "Move down",
+      "queueBottom": "Move to bottom",
+      "delete": "Delete",
+      "openLocation": "Open location"
+    },
+    "location": {
+      "noHost": "Set a Termix host in the plugin settings first.",
+      "noFileManager": "Install and turn on the File Manager plugin first.",
+      "selectOne": "Select one torrent.",
+      "noAccess": "You don't have access to the Termix host set for downloads.",
+      "failed": "Could not work out the torrent's location."
+    },
+    "queueOff": "Queueing is turned off in qBittorrent.",
+    "deletePrompt": {
+      "title_one": "Delete {{count}} torrent?",
+      "title_other": "Delete {{count}} torrents?",
+      "description": "The torrents are removed from qBittorrent.",
+      "deleteFiles": "Also delete downloaded files",
+      "deleteFilesHint": "This can't be undone.",
+      "confirm": "Delete",
+      "cancel": "Cancel"
+    },
+    "addView": {
+      "title": "Add torrents",
+      "links": "Magnet links or URLs",
+      "linksHint": "One per line.",
+      "savePath": "Save path",
+      "savePathHint": "Leave empty for qBittorrent's default.",
+      "category": "Category",
+      "noCategory": "None",
+      "tags": "Tags",
+      "tagsHint": "Separate with commas.",
+      "stopped": "Add stopped",
+      "stoppedHint": "Don't start downloading yet.",
+      "submit": "Add",
+      "cancel": "Cancel",
+      "noLinks": "Enter at least one link.",
+      "added": "Added {{added}}, {{pending}} still being fetched, {{failed}} failed."
+    },
+    "details": {
+      "loading": "Loading details...",
+      "general": "General",
+      "files": "Files",
+      "trackers": "Trackers",
+      "noFiles": "The file list isn't available until the torrent's metadata arrives.",
+      "noTrackers": "No trackers.",
+      "savePath": "Save path",
+      "size": "Total size",
+      "downloaded": "Downloaded",
+      "uploaded": "Uploaded",
+      "ratio": "Ratio",
+      "pieces": "Pieces",
+      "pieceSize": "Piece size",
+      "connections": "Connections",
+      "elapsed": "Time active",
+      "seeding": "Time seeding",
+      "added": "Added",
+      "completed": "Completed",
+      "created": "Created",
+      "createdBy": "Created by",
+      "comment": "Comment",
+      "fileName": "Name",
+      "fileSize": "Size",
+      "fileProgress": "Progress",
+      "filePriority": "Priority",
+      "trackerUrl": "URL",
+      "trackerStatus": "Status",
+      "trackerPeers": "Peers",
+      "trackerMessage": "Message"
+    },
+    "filePriority": {
+      "0": "Skip",
+      "1": "Normal",
+      "6": "High",
+      "7": "Maximum"
+    },
+    "trackerStatus": {
+      "0": "Disabled",
+      "1": "Not contacted",
+      "2": "Working",
+      "3": "Updating",
+      "4": "Not working"
     }
   },
   "states": {
@@ -62,7 +159,7 @@
     },
     "manage": {
       "title": "Manage torrents",
-      "description": "Test the connection, add, start, stop and recheck torrents, and change categories and tags."
+      "description": "Test the connection, add, start, stop and recheck torrents, and change their queue position."
     },
     "delete": {
       "title": "Delete torrents",
@@ -78,6 +175,19 @@
       "apiKey": {
         "label": "API key",
         "description": "Create one in the qBittorrent WebUI settings. Needs qBittorrent 5.2 or newer."
+      },
+      "fileHostId": {
+        "label": "Downloads host",
+        "description": "The Termix host where qBittorrent's downloads can be browsed. Used by Open location.",
+        "none": "None"
+      },
+      "qbtPathPrefix": {
+        "label": "qBittorrent path",
+        "description": "Optional. The start of paths as qBittorrent reports them, for example /downloads in a container."
+      },
+      "hostPathPrefix": {
+        "label": "Host path",
+        "description": "Optional. The same folder on the Termix host, for example /mnt/media/downloads."
       }
     }
   }

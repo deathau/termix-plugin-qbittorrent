@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   countByFilter,
   formatBytes,
+  formatDate,
   formatEta,
   formatPercent,
   formatRatio,
   formatSpeed,
+  locationPath,
+  mapPath,
   matchesFilter,
+  parentPath,
+  parseLinks,
+  parseTags,
+  realTrackers,
   sortRows,
   stateGroup,
   type TorrentRow,
@@ -28,6 +35,9 @@ function row(over: Partial<TorrentRow>): TorrentRow {
     category: "",
     tags: [],
     addedOn: 0,
+    priority: null,
+    savePath: "",
+    contentPath: "",
     ...over,
   };
 }
@@ -169,5 +179,140 @@ describe("formatting", () => {
     expect(formatPercent(0.9996)).toBe("99.9%");
     expect(formatPercent(1)).toBe("100.0%");
     expect(formatPercent(1.5)).toBe("100.0%");
+  });
+});
+
+describe("sorting by queue position", () => {
+  const rows = [
+    row({ name: "seed", priority: null }),
+    row({ name: "second", priority: 2 }),
+    row({ name: "first", priority: 1 }),
+  ];
+  const names = (sorted: TorrentRow[]) => sorted.map((r) => r.name);
+
+  it("orders by position, with torrents outside the queue last", () => {
+    expect(names(sortRows(rows, "priority", "asc"))).toEqual([
+      "first",
+      "second",
+      "seed",
+    ]);
+  });
+
+  it("keeps torrents outside the queue last when reversed", () => {
+    expect(names(sortRows(rows, "priority", "desc"))).toEqual([
+      "second",
+      "first",
+      "seed",
+    ]);
+  });
+});
+
+describe("parseLinks and parseTags", () => {
+  it("splits on lines, dropping blanks and spaces", () => {
+    expect(parseLinks("  magnet:?a \r\n\n http://b/c\n")).toEqual([
+      "magnet:?a",
+      "http://b/c",
+    ]);
+  });
+
+  it("splits tags on commas", () => {
+    expect(parseTags(" a, b ,,")).toEqual(["a", "b"]);
+  });
+});
+
+describe("mapPath", () => {
+  it("swaps a matching prefix", () => {
+    expect(mapPath("/downloads/a/b", "/downloads", "/mnt/media")).toBe(
+      "/mnt/media/a/b",
+    );
+    expect(mapPath("/downloads", "/downloads", "/mnt/media")).toBe(
+      "/mnt/media",
+    );
+  });
+
+  it("matches whole segments only", () => {
+    expect(mapPath("/downloads2/a", "/downloads", "/mnt")).toBe(
+      "/downloads2/a",
+    );
+  });
+
+  it("ignores trailing slashes on either prefix", () => {
+    expect(mapPath("/downloads/a", "/downloads/", "/mnt/")).toBe("/mnt/a");
+  });
+
+  it("leaves paths alone without a mapping or outside it", () => {
+    expect(mapPath("/data/a", "", "")).toBe("/data/a");
+    expect(mapPath("/data/a", "/downloads", "/mnt")).toBe("/data/a");
+  });
+
+  it("handles the root on either side", () => {
+    expect(mapPath("/a", "/", "/mnt")).toBe("/mnt/a");
+    expect(mapPath("/downloads", "/downloads", "/")).toBe("/");
+  });
+
+  it("converts a Windows path for a POSIX host", () => {
+    expect(mapPath("D:\\dl\\a\\b", "D:\\dl", "/mnt/dl")).toBe("/mnt/dl/a/b");
+  });
+});
+
+describe("parentPath", () => {
+  it("finds the folder for POSIX and Windows paths", () => {
+    expect(parentPath("/a/b.iso")).toBe("/a");
+    expect(parentPath("/b.iso")).toBe("/");
+    expect(parentPath("D:\\dl\\b.iso")).toBe("D:\\dl");
+    expect(parentPath("D:\\b.iso")).toBe("D:\\");
+  });
+});
+
+describe("locationPath", () => {
+  const config = { qbtPrefix: "/downloads", hostPrefix: "/mnt" };
+  const single = {
+    savePath: "/downloads/",
+    contentPath: "/downloads/tmp/a.iso",
+  };
+  const multi = { savePath: "/downloads/", contentPath: "/downloads/show" };
+
+  it("opens the parent of a single file, even outside savePath", () => {
+    expect(locationPath(single, [{ name: "a.iso" }], config)).toBe("/mnt/tmp");
+  });
+
+  it("opens the torrent's own folder when it has one", () => {
+    expect(locationPath(multi, [{ name: "show/1.mkv" }], config)).toBe(
+      "/mnt/show",
+    );
+    expect(
+      locationPath(multi, [{ name: "1.mkv" }, { name: "2.mkv" }], config),
+    ).toBe("/mnt/show");
+  });
+
+  it("falls back to savePath before the file list exists", () => {
+    expect(locationPath(multi, [], config)).toBe("/mnt/");
+  });
+});
+
+describe("formatDate", () => {
+  it("shows a dash for unknown dates", () => {
+    expect(formatDate(-1)).toBe("\u2014");
+    expect(formatDate(0)).toBe("\u2014");
+    expect(formatDate(1_700_000_000)).not.toBe("\u2014");
+  });
+});
+
+describe("realTrackers", () => {
+  it("drops the placeholder entries", () => {
+    const tracker = (url: string, tier: number) => ({
+      url,
+      tier,
+      status: 2,
+      num_peers: 0,
+      num_seeds: 0,
+      num_leeches: 0,
+      msg: "",
+    });
+    expect(
+      realTrackers([tracker("** [DHT] **", -1), tracker("http://t", 0)]).map(
+        (t) => t.url,
+      ),
+    ).toEqual(["http://t"]);
   });
 });

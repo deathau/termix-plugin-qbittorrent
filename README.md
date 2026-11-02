@@ -2,9 +2,9 @@
 
 <img src="https://termix.site/img/logo.svg" width="120" alt="Termix Logo" />
 
-<h1>Termix Plugin Template</h1>
+<h1>Termix qBittorrent Plugin</h1>
 
-<p>A starter template for building your own Termix plugin</p>
+<p>View and manage the torrents on a self-hosted qBittorrent server from Termix</p>
 
 </div>
 
@@ -12,55 +12,45 @@
 
 ## Overview
 
-[Termix](https://github.com/Termix-SSH/Termix) is self-hosted, plugin-based server management, and every feature outside the core is a plugin. This template is a small Hello World plugin you can copy to start your own. It has one of each thing most plugins need, set up the same way as the official plugins.
+[Termix](https://github.com/Termix-SSH/Termix) is self-hosted, plugin-based server management. This plugin adds a tab for a qBittorrent 5.2+ server, connected with an API key. See [the docs](docs/index.md) for setup and use.
 
 <br />
 
 ## Features
 
-- A tab opened from the sidebar
-- Two API routes behind a permission
-- An admin setting
-- A table with migrations for SQLite, PostgreSQL and MySQL
-- Backend and frontend tests
-- A release workflow that builds and publishes your plugin as a GitHub release, ready to submit to the [community registry](https://github.com/Termix-SSH/Termix-Registry)
+- Add torrents from magnet links and URLs
+- Sort by name, progress, queue position and more, and filter by state
+- Start, stop, force start, recheck, reannounce and delete torrents
+- Move torrents in the queue
+- View a torrent's details, files and trackers
+- Open a torrent's folder in a File Manager tab on a chosen Termix host
+- Separate view, manage and delete permissions
 
 <br />
 
-## Getting Started
+## Development
 
 You need Node 24 and a Termix server you are an admin on. The full guide is at [docs.termix.site/develop](https://docs.termix.site/develop).
 
-1. Click Use this template on GitHub to make your own repo, then clone it.
-2. In `manifest.json`, change `id`, `name`, `description`, `author`, `repository` and `docs`. The id is lowercase with dashes, like `my-plugin`. Then search the repo for `hello-world`, `hello_world` and `Hello World` and rename them to match: `package.json`, `locales/en.json`, the index name in `src/backend/tables.ts`, the API paths in `src/backend/routes.ts`, the tab id in `src/frontend/index.tsx` and the tests.
-3. Install the packages, then delete `migrations/` and write it again for your id:
-
-   ```bash
-   npm install
-   npm run migrations
-   ```
-
-4. In Termix, open Settings, then General, and turn on Plugin developer mode. Then make an API key under Settings, API keys.
-5. Build and install the plugin on your server. It rebuilds and reinstalls every time you save a file:
+1. Install the packages with `npm install`.
+2. In Termix, open Settings, then General, and turn on Plugin developer mode. Then make an API key under Settings, API keys.
+3. Build and install the plugin on your server. It rebuilds and reinstalls every time you save a file:
 
    ```bash
    npx termix-plugin dev --server http://localhost:30001 --key tmx_your_key
    ```
 
-6. Run the tests and checks before you push:
+4. Run the checks before you push:
 
    ```bash
    npm test
    npm run typecheck
    npm run validate
    npm run build
+   npm run format:check
    ```
 
-7. Using an AI coding tool? It reads `AGENTS.md` (or `CLAUDE.md`), which points it to the full plugin guide that ships with the SDK. Keep the About this plugin section in `AGENTS.md` up to date.
-
-8. Write your docs in `docs/`. `docs/index.md` is the page people see first. Settings, permissions, environment variables and the API reference are added for you from `manifest.json` and the `@openapi` comments on your routes.
-
-When you change a table in `src/backend/tables.ts`, run `npm run migrations` to write the SQLite, PostgreSQL and MySQL migrations. `npm run pack` writes `<id>-<version>.tmxplug` of the built plugin, which you can install from a file in the Plugins tab while developer mode is on.
+<br />
 
 ## Releasing
 
